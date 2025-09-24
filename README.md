@@ -1,6 +1,6 @@
 # For Team Members
 ## Jonathan (Jon)
-[The Editing Link to Our Proposal](https://www.overleaf.com/6934352312bqfmhvbhmbvz#7417ea)
+[The Editing Link to Our Proposal](https://www.overleaf.com/1221615152gzycqntvswgf#1bca67)
 * At present it is just an editable version of the template
 
 ## Zhuoyao (Martin)
