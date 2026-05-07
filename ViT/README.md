@@ -1,9 +1,9 @@
-# ViT — Vision Transformer for BreaKHis Classification
+# ViT: Vision Transformer for BreaKHis Classification
 
 Vision Transformer (ViT-Small) implementation for binary benign/malignant
 classification and 8-way subtype classification on the BreaKHis breast cancer
 histopathology dataset. Includes learnable magnification token fusion matching
-the ResNet multimodal baseline architecture.
+the maim ResNet multimodal baseline architecture.
 
 ## Structure
 
@@ -76,7 +76,7 @@ training curves.
 | False negative rate | 2.1% |
 | Specificity | 88.0% |
 | Patient-level accuracy | 94.1% (17 subjects) |
-| Subtype val accuracy | 42.1--47.7% |
+| Subtype val accuracy | 42.1-47.7% |
 
 ## Notes
 
