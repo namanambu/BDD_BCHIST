@@ -1,0 +1,217 @@
+import time
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from sklearn.metrics import roc_auc_score, accuracy_score, confusion_matrix
+from tqdm import tqdm
+
+class MultiTaskLoss(nn.Module):
+    '''
+    Class: MultiTaskLoss
+    Purpose: Computes combined binary classification and masked subtype
+             classification loss for multi-task training.
+    Inputs:
+      lambda_subtype - float; weight applied to the subtype loss term.
+                       Defaults to 1.0.
+    '''
+
+    def __init__(self, lambda_subtype=1.0):
+        '''
+        Function: MultiTaskLoss.__init__
+        Purpose: Initializes binary and subtype loss functions.
+        Inputs:
+          lambda_subtype - float; weight applied to the subtype loss term.
+                           Defaults to 1.0.
+        Returns:
+          N/A
+        Behaviour:
+          Stores lambda_subtype. Initializes binary cross-entropy loss with
+          standard reduction and subtype cross-entropy loss with no reduction
+          so that per-sample masking can be applied before averaging.
+        '''
+        super(MultiTaskLoss, self).__init__()
+        self.lambda_subtype  = lambda_subtype
+        self.binary_loss_fn  = nn.CrossEntropyLoss()
+        self.subtype_loss_fn = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, binary_logits, subtype_logits, binary_labels, subtype_labels):
+        '''
+        Function: MultiTaskLoss.forward
+        Purpose: Computes total masked multi-task loss.
+        Inputs:
+          binary_logits  - torch.Tensor [B, 2]; benign/malignant logits.
+          subtype_logits - torch.Tensor [B, 8]; subtype logits.
+          binary_labels  - torch.Tensor [B]; ground truth binary labels.
+          subtype_labels - torch.Tensor [B]; ground truth subtype labels.
+        Returns:
+          tuple[torch.Tensor, torch.Tensor, torch.Tensor];
+            total_loss, binary_loss, subtype_loss.
+        Behaviour:
+          Computes binary cross-entropy loss across all samples. Computes
+          per-sample subtype loss and masks it to only include samples where
+          the subtype label is semantically consistent with the binary label:
+          benign subtypes 0-3 for benign samples, malignant subtypes 4-7 for
+          malignant samples. Returns zero subtype loss if no valid samples
+          exist in the batch. Total loss = binary_loss + lambda * subtype_loss.
+        '''
+        loss_binary = self.binary_loss_fn(binary_logits, binary_labels)
+
+        # compute per-sample subtype loss
+        subtype_loss_per = self.subtype_loss_fn(subtype_logits, subtype_labels)
+
+        # mask to semantically valid subtype/binary label combinations only
+        benign_mask    = (binary_labels == 0) & (subtype_labels < 4)
+        malignant_mask = (binary_labels == 1) & (subtype_labels >= 4)
+        valid_mask     = benign_mask | malignant_mask
+
+        if valid_mask.sum() > 0:
+            loss_subtype = subtype_loss_per[valid_mask].mean()
+        else:
+            loss_subtype = torch.tensor(0.0, device=binary_logits.device)
+
+        total_loss = loss_binary + self.lambda_subtype * loss_subtype
+        return total_loss, loss_binary, loss_subtype
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch):
+    '''
+    Function: train_one_epoch
+    Purpose: Runs one full training epoch.
+    Inputs:
+      model      - torch.nn.Module; ViT_BreaKHis model.
+      dataloader - DataLoader; training dataloader.
+      criterion  - MultiTaskLoss; loss function.
+      optimizer  - torch.optim.Optimizer; optimizer.
+      device     - torch.device; device to run on.
+      epoch      - int; current epoch number for tqdm progress label.
+    Returns:
+      dict with keys: loss, binary_loss, subtype_loss,
+                      binary_acc, binary_auc, subtype_acc.
+    Behaviour:
+      Sets model to train mode. Iterates over all batches, runs forward
+      and backward passes, updates weights, and tracks loss and metrics.
+      Returns averaged metrics across the full epoch.
+    '''
+    model.train()
+    running_loss = running_bin_loss = running_sub_loss = 0.0
+    all_bin_preds, all_bin_labels, all_bin_probs = [], [], []
+    all_sub_preds, all_sub_labels = [], []
+
+    progress_bar = tqdm(dataloader, desc=f'Epoch {epoch+1} [Train]')
+
+    for batch in progress_bar:
+        images         = batch['image'].to(device)
+        mags           = batch['magnification'].to(device)
+        binary_labels  = batch['binary_label'].to(device)
+        subtype_labels = batch['subtype_label'].to(device)
+
+        optimizer.zero_grad()
+        binary_logits, subtype_logits = model(images, mags)
+        total_loss, bin_loss, sub_loss = criterion(
+            binary_logits, subtype_logits, binary_labels, subtype_labels
+        )
+        total_loss.backward()
+        optimizer.step()
+
+        running_loss     += total_loss.item()
+        running_bin_loss += bin_loss.item()
+        running_sub_loss += sub_loss.item()
+
+        bin_probs = F.softmax(binary_logits, dim=1)[:, 1].detach().cpu().numpy()
+        bin_preds = binary_logits.argmax(dim=1).detach().cpu().numpy()
+        sub_preds = subtype_logits.argmax(dim=1).detach().cpu().numpy()
+
+        all_bin_probs.extend(bin_probs)
+        all_bin_preds.extend(bin_preds)
+        all_bin_labels.extend(binary_labels.cpu().numpy())
+        all_sub_preds.extend(sub_preds)
+        all_sub_labels.extend(subtype_labels.cpu().numpy())
+
+        progress_bar.set_postfix({
+            'loss':     f'{total_loss.item():.4f}',
+            'bin_loss': f'{bin_loss.item():.4f}',
+            'sub_loss': f'{sub_loss.item():.4f}'
+        })
+
+    n = len(dataloader)
+    return {
+        'loss':         running_loss / n,
+        'binary_loss':  running_bin_loss / n,
+        'subtype_loss': running_sub_loss / n,
+        'binary_acc':   accuracy_score(all_bin_labels, all_bin_preds),
+        'binary_auc':   roc_auc_score(all_bin_labels, all_bin_probs),
+        'subtype_acc':  accuracy_score(all_sub_labels, all_sub_preds),
+    }
+
+
+def validate(model, dataloader, criterion, device, epoch):
+    '''
+    Function: validate
+    Purpose: Runs one full validation epoch.
+    Inputs:
+      model      - torch.nn.Module; ViT_BreaKHis model.
+      dataloader - DataLoader; validation dataloader.
+      criterion  - MultiTaskLoss; loss function.
+      device     - torch.device; device to run on.
+      epoch      - int; current epoch number for tqdm progress label.
+    Returns:
+      dict with keys: loss, binary_loss, subtype_loss, binary_acc,
+                      binary_auc, subtype_acc, confusion_matrix,
+                      all_binary_labels, all_binary_probs,
+                      all_subtype_labels, all_subtype_preds.
+    Behaviour:
+      Sets model to eval mode and disables gradient computation. Iterates
+      over all batches, runs forward pass only, and tracks loss and metrics.
+      Returns averaged metrics and full prediction lists for downstream
+      evaluation and plotting.
+    '''
+    model.eval()
+    running_loss = running_bin_loss = running_sub_loss = 0.0
+    all_bin_preds, all_bin_labels, all_bin_probs = [], [], []
+    all_sub_preds, all_sub_labels = [], []
+
+    progress_bar = tqdm(dataloader, desc=f'Epoch {epoch+1} [Val]')
+
+    with torch.no_grad():
+        for batch in progress_bar:
+            images         = batch['image'].to(device)
+            mags           = batch['magnification'].to(device)
+            binary_labels  = batch['binary_label'].to(device)
+            subtype_labels = batch['subtype_label'].to(device)
+
+            binary_logits, subtype_logits = model(images, mags)
+            total_loss, bin_loss, sub_loss = criterion(
+                binary_logits, subtype_logits, binary_labels, subtype_labels
+            )
+
+            running_loss     += total_loss.item()
+            running_bin_loss += bin_loss.item()
+            running_sub_loss += sub_loss.item()
+
+            bin_probs = F.softmax(binary_logits, dim=1)[:, 1].cpu().numpy()
+            bin_preds = binary_logits.argmax(dim=1).cpu().numpy()
+            sub_preds = subtype_logits.argmax(dim=1).cpu().numpy()
+
+            all_bin_probs.extend(bin_probs)
+            all_bin_preds.extend(bin_preds)
+            all_bin_labels.extend(binary_labels.cpu().numpy())
+            all_sub_preds.extend(sub_preds)
+            all_sub_labels.extend(subtype_labels.cpu().numpy())
+
+            progress_bar.set_postfix({'loss': f'{total_loss.item():.4f}'})
+
+    n = len(dataloader)
+    return {
+        'loss':               running_loss / n,
+        'binary_loss':        running_bin_loss / n,
+        'subtype_loss':       running_sub_loss / n,
+        'binary_acc':         accuracy_score(all_bin_labels, all_bin_preds),
+        'binary_auc':         roc_auc_score(all_bin_labels, all_bin_probs),
+        'subtype_acc':        accuracy_score(all_sub_labels, all_sub_preds),
+        'confusion_matrix':   confusion_matrix(all_bin_labels, all_bin_preds),
+        'all_binary_labels':  all_bin_labels,
+        'all_binary_probs':   all_bin_probs,
+        'all_subtype_labels': all_sub_labels,
+        'all_subtype_preds':  all_sub_preds,
+    }

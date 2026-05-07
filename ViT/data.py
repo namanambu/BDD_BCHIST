@@ -1,0 +1,163 @@
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import pandas as pd
+from PIL import Image
+
+# NOTE: all file paths in this module assume Google Colab with Google Drive mounted.
+# Update paths to match your local directory structure if running outside Colab.
+# Metadata CSV path example:
+# /content/drive/MyDrive/BreaKHis_v1/histology_slides/breast/BreaKHis_metadata.csv
+
+# magnification level encoding: 40x=0, 100x=1, 200x=2, 400x=3
+MAGNIFICATION_MAP = {40: 0, 100: 1, 200: 2, 400: 3}
+
+# binary label encoding: benign=0, malignant=1
+TUMOR_TYPE_MAP = {'b': 0, 'm': 1}
+
+# subtype label encoding
+# benign:    adenosis=0, fibroadenoma=1, phyllodes_tumor=2, tubular_adenoma=3
+# malignant: ductal_carcinoma=4, lobular_carcinoma=5, mucinous_carcinoma=6,
+#            papillary_carcinoma=7
+SUBTYPE_MAP = {
+    'a': 0, 'f': 1, 'pt': 2, 'ta': 3,
+    'dc': 4, 'lc': 5, 'mc': 6, 'pc': 7
+}
+
+
+def get_transforms(split='val'):
+    '''
+    Function: get_transforms
+    Purpose: Returns the image transform pipeline for training or validation.
+    Inputs:
+      split - str; either "train" or "val". Defaults to "val".
+    Returns:
+      transforms.Compose; torchvision transform pipeline.
+    Behaviour:
+      Both splits resize to 224x224 and apply ImageNet normalization.
+      Training additionally applies random horizontal/vertical flips,
+      rotation up to 15 degrees, and mild color jitter. Validation
+      applies only resize and normalization.
+    '''
+    imagenet_mean = [0.485, 0.456, 0.406]
+    imagenet_std  = [0.229, 0.224, 0.225]
+
+    if split == 'train':
+        return transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(degrees=15),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1,
+                                   saturation=0.1, hue=0.05),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+        ])
+    else:
+        return transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+        ])
+
+
+class BreaKHisDataset(Dataset):
+    '''
+    Class: BreaKHisDataset
+    Purpose: PyTorch Dataset for the BreaKHis breast cancer histopathology
+             dataset. Returns images, binary labels, subtype labels,
+             magnification tokens, and subject IDs for each sample.
+    Inputs:
+      metadata_df - pd.DataFrame; metadata for this split. Expected columns:
+                    filepath, tumor_type, subtype, magnification,
+                    subject_id, partition.
+      transform   - torchvision transform pipeline. Defaults to None.
+    '''
+
+    def __init__(self, metadata_df, transform=None):
+        '''
+        Function: BreaKHisDataset.__init__
+        Purpose: Initializes dataset from a metadata DataFrame.
+        Inputs:
+          metadata_df - pd.DataFrame; filtered metadata for this split.
+          transform   - torchvision transform pipeline. Defaults to None.
+        Returns:
+          N/A
+        Behaviour:
+          Resets the DataFrame index and stores the transform pipeline.
+        '''
+        self.metadata  = metadata_df.reset_index(drop=True)
+        self.transform = transform
+
+    def __len__(self):
+        '''
+        Function: BreaKHisDataset.__len__
+        Purpose: Returns the number of samples in the dataset.
+        Returns:
+          int; number of rows in metadata.
+        '''
+        return len(self.metadata)
+
+    def __getitem__(self, idx):
+        '''
+        Function: BreaKHisDataset.__getitem__
+        Purpose: Loads and returns one sample from the dataset.
+        Inputs:
+          idx - int; index of the sample to retrieve.
+        Returns:
+          dict with keys:
+            image         - torch.Tensor [3, 224, 224]
+            binary_label  - torch.Tensor scalar; 0=benign, 1=malignant
+            subtype_label - torch.Tensor scalar; 0-7 (see SUBTYPE_MAP)
+            magnification - torch.Tensor scalar; 0-3 (see MAGNIFICATION_MAP)
+            subject_id    - str; patient identifier
+        Behaviour:
+          Loads the image from disk and converts to RGB. Silently returns
+          a black 224x224 image if the file cannot be loaded. Applies
+          the transform pipeline if provided. Encodes labels and
+          magnification using the module-level mapping dictionaries.
+        '''
+        row = self.metadata.iloc[idx]
+
+        # load image, silently return black image if file is missing
+        try:
+            image = Image.open(row['filepath']).convert('RGB')
+        except Exception:
+            image = Image.new('RGB', (224, 224), color='black')
+
+        if self.transform:
+            image = self.transform(image)
+
+        return {
+            'image':         image,
+            'binary_label':  torch.tensor(
+                                 TUMOR_TYPE_MAP[row['tumor_type']],
+                                 dtype=torch.long),
+            'subtype_label': torch.tensor(
+                                 SUBTYPE_MAP[row['subtype']],
+                                 dtype=torch.long),
+            'magnification': torch.tensor(
+                                 MAGNIFICATION_MAP[row['magnification']],
+                                 dtype=torch.long),
+            'subject_id':    row['subject_id']
+        }
+
+
+def load_metadata(metadata_csv, partition=None):
+    '''
+    Function: load_metadata
+    Purpose: Loads and optionally filters the BreaKHis metadata CSV by split.
+    Inputs:
+      metadata_csv - str; path to BreaKHis_metadata.csv.
+      partition    - str | None; "train", "val", or None to return all rows.
+                     Defaults to None.
+    Returns:
+      pd.DataFrame; metadata filtered to the requested partition.
+    Behaviour:
+      Reads the CSV into a DataFrame. If partition is specified, filters
+      rows where the partition column matches and returns a copy.
+    '''
+    df = pd.read_csv(metadata_csv)
+    if partition is not None:
+        df = df[df['partition'] == partition].copy()
+    return df
