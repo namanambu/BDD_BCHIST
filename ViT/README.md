@@ -1,6 +1,6 @@
 # ViT: Vision Transformer for BreaKHis Classification
 
-Vision Transformer (ViT-Small) implementation for binary benign/malignant
+Vision Transformer (ViT-Small) was explored as an alternative architecture for binary benign/malignant
 classification and 8-way subtype classification on the BreaKHis breast cancer
 histopathology dataset. Includes learnable magnification token fusion matching
 the maim ResNet multimodal baseline architecture.
