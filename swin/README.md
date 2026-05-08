@@ -5,7 +5,7 @@ classification histopathology dataset.
 
 ## Structure
 
-    ViT/
+    swin/
         swinFunctions.py   # includes initialization, data parsing, data loading, model initialization, model training, and model evaluation
         swinBreakHis.ipynb  # full training run with logged outputs and figures
         requirements.txt
@@ -14,48 +14,53 @@ classification histopathology dataset.
 ## Setup (Google Colab)
 
 ```python
-from google.colab import drive
-drive.mount('/content/drive')
+# 1. Import your custom library
+import swinFunctions as sf
+import pandas as pd
+import torch
 
-!pip install -r /content/drive/MyDrive/BDD_BCHIST/ViT/requirements.txt
+# 2. Initialize your configuration
+config = sf.get_training_config()
 
-import sys
-sys.path.append('/content/drive/MyDrive/BDD_BCHIST/ViT')
+# 3. Load Metadata and Create DataLoaders
+df = pd.read_csv(config['METADATA_PATH'])
+train_transform, val_transform = sf.get_transforms()
 
-from vit import (
-    load_vit,
-    BreaKHisDataset,
-    get_transforms,
-    MultiTaskLoss,
-    validate,
-    plot_figures,
+train_loader, val_loader = sf.create_dataloaders(
+    df, 
+    train_transform, 
+    val_transform, 
+    batch_size=config['BATCH_SIZE']
 )
-from vit.data import load_metadata
 ```
 
 ## Quickstart
 
 ```python
-import torch
-from torch.utils.data import DataLoader
+# Load the model architecture and the best saved weights
+model = sf.load_swin_transformer(config['NUM_CLASSES'], config['DEVICE'])
+model.load_state_dict(torch.load('best_swin_model.pth'))
 
-METADATA_CSV = '/content/drive/MyDrive/BreaKHis_v1/histology_slides/breast/BreaKHis_metadata.csv'
-WEIGHTS_PATH = '/content/drive/MyDrive/vit_breakhis_best.pth'
+# 1. Image-Level Evaluation (CM and ROC Plots)
+conf_matrix, auc_score, fpr, tpr = sf.evaluate_model(
+    model, 
+    val_loader, 
+    "Validation Set", 
+    config['DEVICE']
+)
 
-device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model      = load_vit(WEIGHTS_PATH, device=device)
-val_df     = load_metadata(METADATA_CSV, partition='val')
-val_loader = DataLoader(BreaKHisDataset(val_df, get_transforms('val')),
-                        batch_size=32, shuffle=False)
-
-criterion   = MultiTaskLoss()
-val_metrics = validate(model, val_loader, criterion, device, epoch=0)
-print('Val AUC:', val_metrics['binary_auc'])
+# 2. Patient-Level Evaluation (Majority Voting)
+patient_results = sf.perform_patient_level_analysis(
+    model, 
+    val_loader, 
+    df, 
+    config['DEVICE']
+)
 ```
 
 ## Example
 
-See `ViT_training.ipynb` for the full training run with logged outputs
+See `swinBreakHis.ipynb` for the full training run with logged outputs
 and figures, including epoch-by-epoch metrics, confusion matrices, and
 training curves.
 
@@ -63,23 +68,19 @@ training curves.
 
 | Metric | Value |
 |--------|-------|
-| Image-level AUC | 0.932 |
-| Image-level accuracy | 94.6% |
-| Sensitivity | 97.9% |
+| Image-level AUC | 0.83 |
 | False negative rate | 2.1% |
-| Specificity | 88.0% |
+| Epochs to convergence | 5 |
 | Patient-level accuracy | 94.1% (17 subjects) |
-| Subtype val accuracy | 42.1-47.7% |
+| Malignant Patients Identified | 11/11 |
 
 ## Notes
 
-- Training used early stopping based on validation AUC, terminating after
-  10 epochs upon observing no meaningful improvement beyond epoch 5.
-- The checkpoint `vit_breakhis_best.pth` corresponds to epoch 5 (best val AUC).
-- Subtype classification underperforms due to class imbalance and ViT's
-  data requirements on the relatively small BreaKHis training set.
-- This code is NOT compatible with the ResNet baseline or Swin Transformer.
-- All paths assume Google Colab with Google Drive mounted. Update paths
-  to match your local directory structure if running outside Colab.
+- Uses a hierarchical windowed self-attention mechanism, which is better at preserving local spatial hierarchies in histopathology slides compared to standard ViT.
+- The checkpoint `best_swin_model.pth` corresponds to epoch 5 (best val AUC).
+- The model displays high sensitivity (perfect at the patient level), making it an effective conservative screening tool that ensures no malignant cases are missed.
+- Final diagnosis is determined via Majority Voting; if >50% of images from a single subject are flagged, the patient is classified as Malignant.
+- All core logic resides in swinFunctions.py, allowing the Jupyter Notebook to remain focused on visualization and experimentation.
+- Paths need to be altered to match your file management for your locally downloaded dataset
 
 For questions contact: namanam1@jh.edu
