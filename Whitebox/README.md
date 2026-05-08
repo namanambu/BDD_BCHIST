@@ -5,7 +5,7 @@ This folder contains a cleaned modular version of the Grad-CAM and occlusion cod
 ## Structure
 
 ```text
-whitebox_clean/
+Whitebox/
     whitebox/
         model.py        # ResCNN architecture and load_rescnn()
         gradcam.py      # Grad-CAM generation and display
@@ -57,7 +57,7 @@ diff = saliency_difference(cam, occ["heat"])
 show_occlusion_on_image(img_tensor, diff, title="|Occlusion - Grad-CAM| Difference")
 ```
 
-You can do this example in run_single_image.py
+You can do this example in run_single_image.py.  There is also Image_Run_Example.ipynb to the same end. 
 
 
 For questions, contact: Jonathan Brown <jbrow365@jh.edu>
