@@ -14,7 +14,7 @@ Department of Biomedical Engineering, Johns Hopkins University
 | `breakhis_rescnn_project/` | ResNet multimodal baseline, 5-fold CV | zxin7@jh.edu |
 | `ViT/` | ViT-Small architecture | ssingha9@jh.edu |
 | `swin/` | Swin-Tiny architecture | namanam1@jh.edu |
-| `whitebox_clean/` | Grad-CAM + occlusion explainability | jbrow365@jh.edu |
+| `Whitebox` | Grad-CAM + occlusion explainability | jbrow365@jh.edu |
 
 Each folder is self-contained with its own `requirements.txt`, `README.md`, and training notebook.
 
