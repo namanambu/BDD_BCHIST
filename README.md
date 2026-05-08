@@ -16,7 +16,7 @@ Department of Biomedical Engineering, Johns Hopkins University
 | `swin/` | Swin-Tiny architecture | namanam1@jh.edu |
 | `whitebox_clean/` | Grad-CAM + occlusion explainability | jbrow365@jh.edu |
 
-Each folder is self-contained with its own `requirements.txt`, `README.md`, and training notebook. **Modules are not cross-compatible.**
+Each folder is self-contained with its own `requirements.txt`, `README.md`, and training notebook.
 
 ---
 
@@ -40,7 +40,7 @@ All architectures use learnable magnification token embeddings and majority-vote
 
 ## Quickstart
 
-Each module has its own setup — see the subfolder README. All notebooks are configured for Google Colab with Google Drive mounted. Python ≥ 3.8, PyTorch ≥ 1.12, GPU recommended.
+Each module has its own setup — see the subfolder README. All notebooks are configured for Google Colab with Google Drive mounted. Python ≥ 3.8, PyTorch ≥ 1.12, GPU recommended.  
 
 ```bash
 # ResNet baseline (local)
